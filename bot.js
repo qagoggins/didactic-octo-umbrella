@@ -1,8 +1,13 @@
 const { Telegraf, Markup } = require('telegraf');
+const express = require('express');
 
 require("dotenv").config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const app = express();
+const PORT = process.env.PORT || 3000;
+const WEBHOOK_DOMAIN = process.env.WEBHOOK_DOMAIN;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Store user language (simple memory for demo)
 const userLang = {};
@@ -81,4 +86,58 @@ bot.hears(
   }
 );
 
-bot.launch();
+// Health check endpoint for DigitalOcean App Platform
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Telegram Bot is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Start the bot based on environment
+if (NODE_ENV === 'production' && WEBHOOK_DOMAIN) {
+  // Production mode: Use webhooks
+  app.use(bot.webhookCallback('/webhook'));
+
+  bot.telegram.setWebhook(`${WEBHOOK_DOMAIN}/webhook`)
+    .then(() => {
+      console.log('Webhook set successfully');
+      app.listen(PORT, () => {
+        console.log(`Bot server listening on port ${PORT}`);
+        console.log(`Webhook URL: ${WEBHOOK_DOMAIN}/webhook`);
+      });
+    })
+    .catch((err) => {
+      console.error('Error setting webhook:', err);
+      process.exit(1);
+    });
+} else {
+  // Development mode: Use polling
+  console.log('Running in development mode with polling');
+  bot.launch()
+    .then(() => {
+      console.log('Bot started successfully in polling mode');
+
+      // Start express server for health checks even in development
+      app.listen(PORT, () => {
+        console.log(`Health check server listening on port ${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error('Error starting bot:', err);
+      process.exit(1);
+    });
+}
+
+// Enable graceful stop
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
